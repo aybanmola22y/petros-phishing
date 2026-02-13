@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-
-const victimsFilePath = path.resolve(process.cwd(), 'victims.json');
+import { sendPhishingLog, sendVictimDigest } from '@/lib/email';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,27 +10,21 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
-    // Only collect data for simulation failures for the digest
+    // On Vercel, we can't reliably write to local files. 
+    // Instead, we send an immediate email alert for simulation failures.
     if (event === 'simulation_failure') {
-      let victims = [];
-      try {
-        if (fs.existsSync(victimsFilePath)) {
-          const fileData = fs.readFileSync(victimsFilePath, 'utf-8');
-          victims = JSON.parse(fileData);
-        }
-      } catch (error) {
-        console.error('Error reading victims file:', error);
+      const emailResult = await sendPhishingLog(log);
+
+      if (!emailResult.success) {
+        console.error('Failed to send email alert:', emailResult.error);
+        return NextResponse.json({
+          success: true,
+          message: 'Failure logged locally (ephemeral), but email alert failed. Check Vercel environment variables.',
+          error: emailResult.error
+        });
       }
 
-      victims.push(log);
-
-      try {
-        fs.writeFileSync(victimsFilePath, JSON.stringify(victims, null, 2));
-      } catch (error) {
-        console.error('Error writing to victims file:', error);
-      }
-
-      return NextResponse.json({ success: true, message: 'Victim recorded for digest' });
+      return NextResponse.json({ success: true, message: 'Victim recorded and alert email sent.' });
     }
 
     // For other events like 'page_visited', we just acknowledge quietly
@@ -45,9 +36,21 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  // Since we are no longer using logs.json, the GET request for logs
-  // can either be removed or modified to indicate it's disabled.
-  return NextResponse.json({
-    message: 'Persistent JSON logging is disabled. Logs are now sent via email.'
-  }, { status: 200 });
+  // Manual trigger for a digest test
+  const testVictims = [
+    { email: "test-victim@example.com", timestamp: new Date().toISOString() }
+  ];
+
+  const result = await sendVictimDigest(testVictims);
+
+  if (result.success) {
+    return NextResponse.json({
+      message: 'Digest test sent successfully to your configured RECIPIENT_EMAIL.'
+    });
+  } else {
+    return NextResponse.json({
+      message: 'Failed to send digest test. Ensure GMAIL_EMAIL, GMAIL_PASSWORD, and RECIPIENT_EMAIL are set.',
+      error: result.error
+    }, { status: 500 });
+  }
 }
