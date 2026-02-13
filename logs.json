@@ -1,0 +1,12 @@
+[
+  {
+    "event": "page_visited",
+    "email": null,
+    "timestamp": "2026-02-10T05:06:05.303Z"
+  },
+  {
+    "event": "simulation_failure",
+    "email": "jlb@petrosphere.com.ph",
+    "timestamp": "2026-02-10T05:06:30.889Z"
+  }
+]
