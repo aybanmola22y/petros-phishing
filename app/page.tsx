@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Shield, Mail, Lock, Eye, EyeOff, Skull } from "lucide-react"
 import { useEffect } from "react"
 
@@ -124,7 +123,7 @@ const PasswordResetSimulation: React.FC = () => {
       ]
 
       // Simulate the malicious data extraction process
-      for (const { step, message, delay } of steps) {
+      for (const { step, delay } of steps) {
         setProgressStep(step)
         await new Promise((resolve) => setTimeout(resolve, delay))
       }
@@ -197,7 +196,7 @@ const PasswordResetSimulation: React.FC = () => {
     }
 
     trackVisitor()
-  }, [])
+  }, [formData.email])
 
   useEffect(() => {
     if (showTwist && countdown > 0) {
@@ -277,7 +276,7 @@ const PasswordResetSimulation: React.FC = () => {
 
           <div className="space-y-4">
             <h1 className="text-6xl md:text-8xl font-black text-white tracking-tighter uppercase italic leading-none drop-shadow-[0_0_15px_rgba(255,255,255,0.3)]">
-              YOU'VE BEEN <span className="text-red-600">HACKED!</span>
+              YOU&apos;VE BEEN <span className="text-red-600">HACKED!</span>
             </h1>
             <p className="text-xl text-slate-400 font-medium tracking-[0.2em] font-mono leading-none">SYSTEM VULNERABILITY EXPLOITED</p>
           </div>
@@ -286,7 +285,7 @@ const PasswordResetSimulation: React.FC = () => {
             <div className="bg-red-950/20 border border-red-500/20 p-8 rounded-3xl backdrop-blur-sm relative overflow-hidden group">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-50"></div>
               <p className="text-red-200 text-2xl font-bold italic leading-relaxed mb-4">
-                "Why did the hacker get lost? Because he couldn't find the 'backdoor'!"
+                &quot;Why did the hacker get lost? Because he couldn&apos;t find the &apos;backdoor&apos;!&quot;
               </p>
               <div className="text-slate-500 font-mono text-sm border-t border-red-500/10 pt-4">
                 DATA EXTRACTION IN PROGRESS... PLEASE WAIT
