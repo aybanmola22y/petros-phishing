@@ -8,6 +8,9 @@ const transporter = nodemailer.createTransport({
     user: process.env.GMAIL_EMAIL,
     pass: process.env.GMAIL_PASSWORD,
   },
+  tls: {
+    rejectUnauthorized: false // Helps in some restricted environments
+  }
 });
 
 interface PhishingLog {

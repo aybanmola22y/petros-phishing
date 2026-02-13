@@ -18,10 +18,10 @@ export async function POST(req: NextRequest) {
       if (!emailResult.success) {
         console.error('Failed to send email alert:', emailResult.error);
         return NextResponse.json({
-          success: true,
-          message: 'Failure logged locally (ephemeral), but email alert failed. Check Vercel environment variables.',
-          error: emailResult.error
-        });
+          success: false,
+          message: 'Email alert failed. Check Vercel environment variables.',
+          error: String(emailResult.error)
+        }, { status: 500 });
       }
 
       return NextResponse.json({ success: true, message: 'Victim recorded and alert email sent.' });
