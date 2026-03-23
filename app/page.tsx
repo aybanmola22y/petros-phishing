@@ -1,12 +1,12 @@
 "use client"
 
 import type React from "react"
-import { useState, type FormEvent, type ChangeEvent, useEffect } from "react"
+import { useState, useRef, useCallback, type FormEvent, type ChangeEvent, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Shield, Lock, AlertTriangle, Eye, EyeOff, Loader2, ArrowRight, Mail, CheckCircle, Smartphone, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react"
+import { Shield, Lock, AlertTriangle, Eye, EyeOff, Loader2, ArrowRight, Mail, CheckCircle, Smartphone, ExternalLink, ChevronLeft, ChevronRight, Volume2, VolumeX, Play, Pause } from "lucide-react"
 import Script from "next/script"
 
 interface FormData {
@@ -72,6 +72,9 @@ const PasswordResetSimulation: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [hasReadModule, setHasReadModule] = useState<boolean>(false)
+  const [isPlaying, setIsPlaying] = useState<boolean>(false)
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false)
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   // Load PDF.js and initialize document in background
   useEffect(() => {
@@ -188,6 +191,189 @@ const PasswordResetSimulation: React.FC = () => {
       setHasReadModule(true)
     }
   }, [currentPage, totalPages])
+
+  // Cancel speech when user manually changes page (so it re-reads from new page)
+  const cancelSpeech = useCallback(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel()
+    }
+    setIsSpeaking(false)
+  }, [])
+
+  // Speech synthesis: extract text from current PDF page and read aloud
+  useEffect(() => {
+    if (!isPlaying || !pdfDoc || !isTraining) return
+
+    let cancelled = false
+
+    const speakPage = async () => {
+      try {
+        const page = await pdfDoc.getPage(currentPage)
+        const textContent = await page.getTextContent()
+
+        // Join items carefully: preserve punctuation spacing so TTS pauses naturally
+        // PDF text items are stored in reading order — collect them with their transforms
+        const items: any[] = textContent.items
+
+        // Group items by Y coordinate to detect line breaks + large gaps (blank lines)
+        type LineEntry = { text: string; gap: number }
+        const lineEntries: LineEntry[] = []
+        let lastY2: number | null = null
+        let lastLineY: number | null = null
+        let currentLine2 = ''
+
+        for (const item of items) {
+          const y = item.transform ? Math.round(item.transform[5]) : null
+          if (lastY2 !== null && y !== null && Math.abs(y - lastY2) > 5) {
+            // New line detected — record the gap from the previous line's Y
+            const gap = lastLineY !== null && y !== null ? Math.abs(lastLineY - y) : 0
+            if (currentLine2.trim()) {
+              lineEntries.push({ text: currentLine2.trim(), gap })
+            }
+            lastLineY = lastY2
+            currentLine2 = item.str
+          } else {
+            currentLine2 += (currentLine2 ? ' ' : '') + item.str
+          }
+          if (y !== null) lastY2 = y
+        }
+        if (currentLine2.trim()) lineEntries.push({ text: currentLine2.trim(), gap: 0 })
+
+        // Estimate normal line height (median gap) to detect "large" gaps (blank lines)
+        const gaps = lineEntries.map(l => l.gap).filter(g => g > 0).sort((a, b) => a - b)
+        const medianGap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 20
+        const LARGE_GAP_THRESHOLD = medianGap * 1.6  // gaps 60% bigger than normal = blank line
+
+        // Build processed lines with pauses
+        const processedLines = lineEntries.map(({ text, gap }, i) => {
+          const cleaned = text.replace(/^[•\-\*\u25CF\u2022]\s*/, '').trim() // strip bullet symbols
+          if (!cleaned) return ''
+          const lastChar = cleaned[cleaned.length - 1]
+          const hasPunctuation = /[.,!?;:]/.test(lastChar)
+
+          // Choose suffix: slide title gets long pause, large-gap lines get short pause, others get comma
+          let suffix = ''
+          if (i === 0) {
+            suffix = hasPunctuation ? ' ...' : '. ...'         // title: full pause
+          } else if (gap > LARGE_GAP_THRESHOLD) {
+            suffix = hasPunctuation ? ' .' : ', .'             // blank-line gap: short extra pause
+          } else if (!hasPunctuation) {
+            suffix = ','                                         // no punctuation: short comma pause
+          }
+
+          return cleaned + suffix
+        }).filter(Boolean)
+
+        const combined = processedLines.join(' ')
+
+
+        // Clean up: fix hyphens, punctuation spacing, etc.
+        const text = combined
+          .replace(/\s+/g, ' ')                         // collapse multiple spaces
+          .replace(/(\w)-(\w)/g, '$1 $2')               // hyphen between words → space (avoid long TTS pause)
+          .replace(/([.,!?;:])([^\s])/g, '$1 $2')       // ensure space AFTER punctuation
+          .replace(/([a-z])([A-Z])/g, '$1. $2')         // fix missing sentence breaks
+          .replace(/\s([.,!?;:])/g, '$1')               // remove space BEFORE punctuation
+          .trim()
+
+        if (cancelled || !text) {
+          // If no text on this slide, auto-advance after a short pause
+          if (!cancelled && isPlaying && currentPage < totalPages) {
+            setTimeout(() => {
+              if (!cancelled) setCurrentPage(prev => Math.min(totalPages, prev + 1))
+            }, 1500)
+          } else if (!cancelled && currentPage >= totalPages) {
+            setIsPlaying(false)
+          }
+          return
+        }
+
+        // Cancel any current speech first
+        window.speechSynthesis.cancel()
+
+        const utterance = new SpeechSynthesisUtterance(text)
+        utterance.rate = 0.88   // slightly slower for clarity
+        utterance.pitch = 0.9   // slightly lower pitch for a deeper, male-sounding tone
+        utterance.volume = 1
+
+        // Prioritize a male English voice
+        const voices = window.speechSynthesis.getVoices()
+        const preferred =
+          voices.find(v => /david/i.test(v.name) && v.lang.startsWith('en'))          // Microsoft David (Windows)
+          || voices.find(v => /mark/i.test(v.name) && v.lang.startsWith('en'))        // Microsoft Mark
+          || voices.find(v => /guy/i.test(v.name) && v.lang.startsWith('en'))         // Microsoft Guy
+          || voices.find(v => /male/i.test(v.name) && v.lang.startsWith('en'))        // any 'male' labeled voice
+          || voices.find(v => v.name === 'Google UK English Male')                     // Chrome male
+          || voices.find(v => v.name === 'Google US English' && v.lang === 'en-US')   // Chrome fallback
+          || voices.find(v => v.lang.startsWith('en-US'))
+          || voices.find(v => v.lang.startsWith('en'))
+        if (preferred) utterance.voice = preferred
+
+        utterance.onstart = () => {
+          if (!cancelled) setIsSpeaking(true)
+        }
+
+        utterance.onend = () => {
+          if (cancelled) return
+          setIsSpeaking(false)
+          // Auto-advance to next slide
+          if (currentPage < totalPages) {
+            setTimeout(() => {
+              if (!cancelled) setCurrentPage(prev => Math.min(totalPages, prev + 1))
+            }, 800)
+          } else {
+            // Reached the last page
+            setIsPlaying(false)
+          }
+        }
+
+        utterance.onerror = () => {
+          if (!cancelled) setIsSpeaking(false)
+        }
+
+        utteranceRef.current = utterance
+        window.speechSynthesis.speak(utterance)
+      } catch (err) {
+        console.error('Speech error:', err)
+        if (!cancelled) setIsSpeaking(false)
+      }
+    }
+
+    speakPage()
+
+    return () => {
+      cancelled = true
+      cancelSpeech()
+    }
+  }, [isPlaying, currentPage, pdfDoc, isTraining, totalPages, cancelSpeech])
+
+  // Cleanup speech on unmount or when leaving training
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }, [])
+
+  // Preload voices (Chrome loads them async)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.getVoices()
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.getVoices()
+      }
+    }
+  }, [])
+
+  const togglePlayback = useCallback(() => {
+    if (isPlaying) {
+      cancelSpeech()
+      setIsPlaying(false)
+    } else {
+      setIsPlaying(true)
+    }
+  }, [isPlaying, cancelSpeech])
 
   // Auto-redirect to training after results are shown
   useEffect(() => {
@@ -381,6 +567,8 @@ const PasswordResetSimulation: React.FC = () => {
     setMsLoading(false)
     setTrainingCountdown(10)
     setErrors([])
+    setIsPlaying(false)
+    cancelSpeech()
 
     exitFullscreen()
   }
@@ -509,9 +697,38 @@ const PasswordResetSimulation: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              {/* Play / Pause Presentation Button */}
+              <Button
+                onClick={togglePlayback}
+                disabled={!pdfDoc}
+                className={`h-10 px-4 font-bold uppercase tracking-widest rounded-xl transition-all duration-300 flex items-center gap-2 ${isPlaying
+                  ? "bg-orange-600 hover:bg-orange-500 text-white shadow-[0_0_15px_rgba(234,88,12,0.4)]"
+                  : "bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+                  }`}
+              >
+                {isPlaying ? (
+                  <>
+                    <Pause className="h-4 w-4" />
+                    <span className="hidden sm:inline text-xs">Pause</span>
+                    {isSpeaking && (
+                      <span className="flex items-center gap-0.5 ml-1">
+                        <span className="w-0.5 h-3 bg-white rounded-full animate-pulse" />
+                        <span className="w-0.5 h-4 bg-white rounded-full animate-pulse [animation-delay:150ms]" />
+                        <span className="w-0.5 h-2 bg-white rounded-full animate-pulse [animation-delay:300ms]" />
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4" />
+                    <span className="hidden sm:inline text-xs">Play</span>
+                  </>
+                )}
+              </Button>
+
               <div className="flex items-center bg-black/40 rounded-lg p-1 border border-white/10 mr-4">
                 <Button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  onClick={() => { cancelSpeech(); setCurrentPage(p => Math.max(1, p - 1)); }}
                   disabled={currentPage <= 1}
                   variant="ghost"
                   size="icon"
@@ -521,7 +738,7 @@ const PasswordResetSimulation: React.FC = () => {
                 </Button>
                 <span className="px-3 text-xs font-mono text-slate-400">Page {currentPage} of {totalPages || '--'}</span>
                 <Button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  onClick={() => { cancelSpeech(); setCurrentPage(p => Math.min(totalPages, p + 1)); }}
                   disabled={currentPage >= totalPages}
                   variant="ghost"
                   size="icon"
@@ -531,7 +748,7 @@ const PasswordResetSimulation: React.FC = () => {
                 </Button>
               </div>
               <Button
-                onClick={() => setIsQuiz(true)}
+                onClick={() => { cancelSpeech(); setIsPlaying(false); setIsQuiz(true); }}
                 disabled={!hasReadModule}
                 className={`h-10 font-black px-6 uppercase tracking-widest rounded-xl transition-all duration-300 ${hasReadModule
                   ? "bg-green-600 hover:bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.3)]"
@@ -542,10 +759,10 @@ const PasswordResetSimulation: React.FC = () => {
               </Button>
             </div>
           </CardHeader>
-          <CardContent id="pdf-container" className="flex-1 p-0 bg-slate-950 relative overflow-auto flex justify-center">
+          <CardContent id="pdf-container" className="flex-1 p-0 bg-slate-950 relative overflow-auto">
             {pdfDoc ? (
-              <div className="p-8">
-                <canvas id="pdf-canvas" className="shadow-2xl mx-auto border border-white/10" />
+              <div className="w-full flex justify-center p-8">
+                <canvas id="pdf-canvas" className="shadow-2xl border border-white/10 max-w-full" />
               </div>
             ) : (
               <div className="absolute inset-0 flex items-center justify-center">
@@ -559,7 +776,14 @@ const PasswordResetSimulation: React.FC = () => {
             )}
           </CardContent>
           <div className="p-4 bg-slate-900 border-t border-white/5 text-center px-4">
-            <p className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.2em]">Browsing interactive slide {currentPage} / {totalPages}. Use the arrows to navigate.</p>
+            <p className="text-[10px] text-slate-500 font-mono uppercase tracking-[0.2em]">
+              {isPlaying && isSpeaking
+                ? `🔊 Reading slide ${currentPage} / ${totalPages} aloud... Auto-advancing when done.`
+                : isPlaying
+                  ? `⏳ Preparing slide ${currentPage} / ${totalPages}...`
+                  : `Browsing interactive slide ${currentPage} / ${totalPages}. Press Play to start the presentation.`
+              }
+            </p>
           </div>
         </Card>
       </div>
