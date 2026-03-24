@@ -1,29 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendPhishingLog } from '@/lib/email';
+import { kv } from '@vercel/kv';
 import fs from 'fs';
 import path from 'path';
 
 const logsFilePath = path.resolve(process.cwd(), 'logs.json');
 const victimsFilePath = path.resolve(process.cwd(), 'victims.json');
 
-// Helper to append to JSON file
-function appendToLogFile(filePath: string, entry: any) {
-  // Vercel has a read-only file system. Skip file writing in production.
+// Helper to record an entry
+async function recordEntry(logEntry: any) {
+  // 1. Storage on Vercel (using KV)
   if (process.env.VERCEL) {
-    console.log(`Skipping file write to ${path.basename(filePath)} on Vercel.`);
+    try {
+      // Store in a list called 'phishing_logs'
+      await kv.lpush('phishing_logs', logEntry);
+      console.log('Logged to Vercel KV');
+    } catch (err) {
+      console.error('Failed to write to Vercel KV:', err);
+    }
     return;
   }
 
+  // 2. Local Storage fallback (File System)
   try {
     let data = [];
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8');
+    if (fs.existsSync(logsFilePath)) {
+      const content = fs.readFileSync(logsFilePath, 'utf-8');
       data = content ? JSON.parse(content) : [];
     }
-    data.push(entry);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    data.push(logEntry);
+    fs.writeFileSync(logsFilePath, JSON.stringify(data, null, 2));
   } catch (err) {
-    console.error(`Failed to write to ${filePath}:`, err);
+    console.error(`Failed to write to logs.json:`, err);
   }
 }
 
@@ -36,22 +44,15 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
-    // 1. Always record to logs.json (for general history)
-    appendToLogFile(logsFilePath, logEntry);
+    // Record the entry (KV or File)
+    await recordEntry(logEntry);
 
-    // 2. If it's a simulation failure, also record to victims.json (for digest system)
-    if (event === 'simulation_failure') {
-      appendToLogFile(victimsFilePath, { email: logEntry.email, timestamp: logEntry.timestamp });
-    }
-
-    // 3. Send immediate email alert for simulation failures
+    // Send immediate email alert for simulation failures
     if (event === 'simulation_failure') {
       const emailResult = await sendPhishingLog(logEntry);
 
       if (!emailResult.success) {
         console.error('Failed to send email alert:', emailResult.error);
-        // We still return success: true because we recorded it locally, 
-        // but we include the error for debugging.
         return NextResponse.json({
           success: true,
           recorded: true,
@@ -72,6 +73,19 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
+    // 1. Fetch from Vercel KV if available
+    if (process.env.VERCEL) {
+      try {
+        const logs = await kv.lrange('phishing_logs', 0, -1);
+        return NextResponse.json(logs || []);
+      } catch (err) {
+        console.error('Failed to read from Vercel KV:', err);
+        // Fallback to empty array if KV fails
+        return NextResponse.json([]);
+      }
+    }
+
+    // 2. Fetch from local file system
     if (!fs.existsSync(logsFilePath)) {
       return NextResponse.json([]);
     }
@@ -79,7 +93,6 @@ export async function GET() {
     const fileData = fs.readFileSync(logsFilePath, 'utf-8');
     const logs = JSON.parse(fileData);
 
-    // Return the logs in reverse chronological order for the UI
     return NextResponse.json(Array.isArray(logs) ? logs.reverse() : []);
   } catch (error) {
     console.error('Error reading logs:', error);
