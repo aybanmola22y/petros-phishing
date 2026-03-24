@@ -91,11 +91,13 @@ export async function sendPhishingLog(log: PhishingLog) {
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    console.log(`Attempting to send phishing alert for: ${log.email || 'Anonymous'}`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Phishing alert sent successfully:', info.messageId);
     return { success: true };
   } catch (error) {
-    console.error('Error sending email:', error);
-    return { success: false, error };
+    console.error('CRITICAL: Error sending phishing alert email:', error);
+    return { success: false, error: String(error) };
   }
 }
 
@@ -171,10 +173,12 @@ export async function sendVictimDigest(victims: { email: string | null, timestam
   };
 
   try {
-    await transporter.sendMail(mailOptions);
+    console.log(`Attempting to send victim digest for ${victims.length} records...`);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Victim digest sent successfully:', info.messageId);
     return { success: true };
   } catch (error) {
-    console.error('Error sending digest email:', error);
-    return { success: false, error };
+    console.error('CRITICAL: Error sending digest email:', error);
+    return { success: false, error: String(error) };
   }
 }

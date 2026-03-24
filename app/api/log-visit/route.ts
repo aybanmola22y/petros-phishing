@@ -1,33 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { sendPhishingLog, sendVictimDigest } from '@/lib/email';
+import { sendPhishingLog } from '@/lib/email';
+import fs from 'fs';
+import path from 'path';
+
+const logsFilePath = path.resolve(process.cwd(), 'logs.json');
+const victimsFilePath = path.resolve(process.cwd(), 'victims.json');
+
+// Helper to append to JSON file
+function appendToLogFile(filePath: string, entry: any) {
+  try {
+    let data = [];
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      data = content ? JSON.parse(content) : [];
+    }
+    data.push(entry);
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error(`Failed to write to ${filePath}:`, err);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
     const { email, event } = await req.json();
-    const log = {
+    const logEntry = {
       event: event || 'visited',
       email: email || null,
       timestamp: new Date().toISOString(),
     };
 
-    // On Vercel, we can't reliably write to local files. 
-    // Instead, we send an immediate email alert for simulation failures.
+    // 1. Always record to logs.json (for general history)
+    appendToLogFile(logsFilePath, logEntry);
+
+    // 2. If it's a simulation failure, also record to victims.json (for digest system)
     if (event === 'simulation_failure') {
-      const emailResult = await sendPhishingLog(log);
+      appendToLogFile(victimsFilePath, { email: logEntry.email, timestamp: logEntry.timestamp });
+    }
+
+    // 3. Send immediate email alert for simulation failures
+    if (event === 'simulation_failure') {
+      const emailResult = await sendPhishingLog(logEntry);
 
       if (!emailResult.success) {
         console.error('Failed to send email alert:', emailResult.error);
+        // We still return success: true because we recorded it locally, 
+        // but we include the error for debugging.
         return NextResponse.json({
-          success: false,
-          message: 'Email alert failed. Check Vercel environment variables.',
+          success: true,
+          recorded: true,
+          emailSent: false,
           error: String(emailResult.error)
-        }, { status: 500 });
+        });
       }
 
       return NextResponse.json({ success: true, message: 'Victim recorded and alert email sent.' });
     }
 
-    // For other events like 'page_visited', we just acknowledge quietly
     return NextResponse.json({ success: true, message: 'Event logged' });
   } catch (error) {
     console.error('Error in log-visit API:', error);
@@ -36,21 +65,18 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  // Manual trigger for a digest test
-  const testVictims = [
-    { email: "test-victim@example.com", timestamp: new Date().toISOString() }
-  ];
+  try {
+    if (!fs.existsSync(logsFilePath)) {
+      return NextResponse.json([]);
+    }
 
-  const result = await sendVictimDigest(testVictims);
+    const fileData = fs.readFileSync(logsFilePath, 'utf-8');
+    const logs = JSON.parse(fileData);
 
-  if (result.success) {
-    return NextResponse.json({
-      message: 'Digest test sent successfully to your configured RECIPIENT_EMAIL.'
-    });
-  } else {
-    return NextResponse.json({
-      message: 'Failed to send digest test. Ensure GMAIL_EMAIL, GMAIL_PASSWORD, and RECIPIENT_EMAIL are set.',
-      error: result.error
-    }, { status: 500 });
+    // Return the logs in reverse chronological order for the UI
+    return NextResponse.json(Array.isArray(logs) ? logs.reverse() : []);
+  } catch (error) {
+    console.error('Error reading logs:', error);
+    return NextResponse.json({ error: 'Failed to load logs' }, { status: 500 });
   }
 }
