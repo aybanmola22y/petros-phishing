@@ -44,12 +44,14 @@ export default function LogsPage() {
       const res = await fetch("/api/admin/test-email");
       const data = await res.json();
       if (data.success) {
-        setTestMessage("✅ Test email sent! Check your inbox.");
+        setTestMessage("✅ Connection verified and test email sent! Check your inbox.");
       } else {
-        setTestMessage(`❌ Failed: ${data.error || data.message}`);
+        const errorDetail = data.error ? `\nError: ${data.error}` : "";
+        const userDetail = data.user ? `\nSMTP User: ${data.user}` : "";
+        setTestMessage(`❌ Test Failed: ${data.message}${errorDetail}${userDetail}`);
       }
     } catch (err) {
-      setTestMessage("❌ Connection error during test.");
+      setTestMessage("❌ Connection error while trying to reach the test API.");
     } finally {
       setTestSending(false);
     }

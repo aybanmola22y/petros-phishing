@@ -1,17 +1,22 @@
 import nodemailer from 'nodemailer';
 
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false, // TLS
+  service: 'gmail',
   auth: {
     user: process.env.GMAIL_EMAIL,
     pass: process.env.GMAIL_PASSWORD,
   },
-  tls: {
-    rejectUnauthorized: false // Helps in some restricted environments
-  }
 });
+
+export async function verifyConnection() {
+  try {
+    await transporter.verify();
+    return { success: true };
+  } catch (error) {
+    console.error('SMTP Connection Verification Failed:', error);
+    return { success: false, error: String(error) };
+  }
+}
 
 interface PhishingLog {
   email: string | null;
