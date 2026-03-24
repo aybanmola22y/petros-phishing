@@ -37,15 +37,19 @@ async function recordEntry(logEntry: any) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, event } = await req.json();
+    const body = await req.json();
+    const { email, event } = body;
+    
     const logEntry = {
       event: event || 'visited',
       email: email || null,
       timestamp: new Date().toISOString(),
     };
 
-    // Record the entry (KV or File)
-    await recordEntry(logEntry);
+    // ONLY record if it's NOT a simple page visit
+    if (logEntry.event !== 'page_visited') {
+      await recordEntry(logEntry);
+    }
 
     // Send immediate email alert for simulation failures
     if (event === 'simulation_failure') {
@@ -73,27 +77,30 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
+    let logs = [];
     // 1. Fetch from Vercel KV if available
     if (process.env.VERCEL) {
       try {
-        const logs = await kv.lrange('phishing_logs', 0, -1);
-        return NextResponse.json(logs || []);
+        logs = await kv.lrange('phishing_logs', 0, -1);
       } catch (err) {
         console.error('Failed to read from Vercel KV:', err);
-        // Fallback to empty array if KV fails
-        return NextResponse.json([]);
+        logs = [];
+      }
+    } else {
+      // 2. Fetch from local file system
+      if (fs.existsSync(logsFilePath)) {
+        const fileData = fs.readFileSync(logsFilePath, 'utf-8');
+        logs = JSON.parse(fileData);
+        if (Array.isArray(logs)) logs.reverse();
       }
     }
 
-    // 2. Fetch from local file system
-    if (!fs.existsSync(logsFilePath)) {
-      return NextResponse.json([]);
-    }
+    // Filter out simple page visits from the display
+    const filteredLogs = Array.isArray(logs) 
+      ? logs.filter((log: any) => log.event === 'simulation_failure')
+      : [];
 
-    const fileData = fs.readFileSync(logsFilePath, 'utf-8');
-    const logs = JSON.parse(fileData);
-
-    return NextResponse.json(Array.isArray(logs) ? logs.reverse() : []);
+    return NextResponse.json(filteredLogs);
   } catch (error) {
     console.error('Error reading logs:', error);
     return NextResponse.json({ error: 'Failed to load logs' }, { status: 500 });

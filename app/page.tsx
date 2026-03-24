@@ -165,26 +165,6 @@ const PasswordResetSimulation: React.FC = () => {
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange)
   }, [showTwist])
 
-  // Visitor Tracking
-  useEffect(() => {
-    const trackVisitor = async () => {
-      try {
-        await fetch("/api/log-visit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            event: "page_visited",
-            email: formData.email || null,
-            timestamp: new Date().toISOString(),
-          }),
-        })
-      } catch (err) {
-        console.error("Tracking failed", err)
-      }
-    }
-    trackVisitor()
-  }, [formData.email])
-
   // Track module completion
   useEffect(() => {
     if (currentPage === totalPages && totalPages > 0) {
