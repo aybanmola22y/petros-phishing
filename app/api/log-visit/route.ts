@@ -8,6 +8,12 @@ const victimsFilePath = path.resolve(process.cwd(), 'victims.json');
 
 // Helper to append to JSON file
 function appendToLogFile(filePath: string, entry: any) {
+  // Vercel has a read-only file system. Skip file writing in production.
+  if (process.env.VERCEL) {
+    console.log(`Skipping file write to ${path.basename(filePath)} on Vercel.`);
+    return;
+  }
+
   try {
     let data = [];
     if (fs.existsSync(filePath)) {
